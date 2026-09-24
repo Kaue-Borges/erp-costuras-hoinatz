@@ -709,10 +709,10 @@ button {
 }
 
 .erp-brand img {
-  width: 178px;
-  height: 76px;
-  object-fit: cover;
-  object-position: 50% 58%;
+  width: 168px;
+  height: 64px;
+  object-fit: contain;
+  object-position: center;
   border-radius: 10px;
 }
 
