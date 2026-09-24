@@ -1,0 +1,46 @@
+import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { Badge } from "../components/ui/Badge"
+import { Button } from "../components/ui/Button"
+import { Card } from "../components/ui/Card"
+import { EmptyState } from "../components/ui/EmptyState"
+import { Feedback } from "../components/ui/Feedback"
+import { Input, Select } from "../components/ui/FormField"
+import { PageHeader } from "../components/ui/PageHeader"
+import { Table } from "../components/ui/Table"
+import { apontamentosRepository } from "../repositories/apontamentosRepository"
+import { coresRepository } from "../repositories/coresRepository"
+import { funcionariosRepository } from "../repositories/funcionariosRepository"
+import { operacoesRepository } from "../repositories/operacoesRepository"
+import { ordensProducaoRepository } from "../repositories/ordensProducaoRepository"
+import type { Apontamento, Cor, Funcionario, OperacaoCadastro, OrdemProducao } from "../types/entities"
+import { formatPercent } from "../utils/formatters"
+import { calcularEficiencia, calcularProducaoEsperada, classificarEficiencia, minutosEntreHorarios } from "../utils/producao"
+
+type Form = Omit<Apontamento, "id" | "createdAt" | "updatedAt" | "tempoMinutos" | "producaoEsperada" | "eficiencia">
+const empty: Form = { funcionarioId: "", opId: "", operacaoId: "", corId: "", tamanho: "", pacote: "", quantidade: 0, horaInicio: "", horaFim: "", metaPecasHora: 0, observacao: "" }
+
+function ApontamentosPage() {
+  const [form, setForm] = useState<Form>(empty); const [editingId, setEditingId] = useState<string>()
+  const [records, setRecords] = useState<Apontamento[]>([]); const [employees, setEmployees] = useState<Funcionario[]>([])
+  const [orders, setOrders] = useState<OrdemProducao[]>([]); const [operations, setOperations] = useState<OperacaoCadastro[]>([]); const [colors, setColors] = useState<Cor[]>([])
+  const [feedback, setFeedback] = useState({ message: "", tone: "success" as "success" | "error" })
+  async function load() { const [a, b, c, d, e] = await Promise.all([apontamentosRepository.getAll(), funcionariosRepository.getAll(), ordensProducaoRepository.getAll(), operacoesRepository.getAll(), coresRepository.getAll()]); setRecords(a); setEmployees(b); setOrders(c); setOperations(d); setColors(e) }
+  useEffect(() => {
+    let active = true
+    void Promise.all([apontamentosRepository.getAll(), funcionariosRepository.getAll(), ordensProducaoRepository.getAll(), operacoesRepository.getAll(), coresRepository.getAll()]).then(([a, b, c, d, e]) => {
+      if (!active) return
+      setRecords(a); setEmployees(b); setOrders(c); setOperations(d); setColors(e)
+    })
+    return () => { active = false }
+  }, [])
+  const employeeMap = useMemo(() => new Map(employees.map((item) => [item.id, item.nome])), [employees]); const orderMap = useMemo(() => new Map(orders.map((item) => [item.id, item.numero])), [orders]); const operationMap = useMemo(() => new Map(operations.map((item) => [item.id, item.nome])), [operations]); const colorMap = useMemo(() => new Map(colors.map((item) => [item.id, item.nome])), [colors])
+  const minutes = minutosEntreHorarios(form.horaInicio, form.horaFim); const expected = calcularProducaoEsperada(form.metaPecasHora, minutes); const efficiency = calcularEficiencia(form.quantidade, expected); const classification = classificarEficiencia(efficiency)
+
+  async function submit(event: FormEvent) { event.preventDefault(); if (!form.funcionarioId || !form.opId || !form.operacaoId || form.quantidade <= 0 || minutes <= 0 || form.metaPecasHora <= 0) { setFeedback({ message: "Preencha funcionária, OP, operação, quantidade, horários válidos e meta.", tone: "error" }); return } const data = { ...form, tempoMinutos: minutes, producaoEsperada: expected, eficiencia: efficiency }; if (editingId) await apontamentosRepository.update(editingId, data); else await apontamentosRepository.create(data); await load(); setForm(empty); setEditingId(undefined); setFeedback({ message: `Apontamento ${editingId ? "atualizado" : "registrado"} com sucesso.`, tone: "success" }) }
+  function edit(item: Apontamento) { const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, tempoMinutos: _tempo, producaoEsperada: _esperada, eficiencia: _eficiencia, ...data } = item; void _id; void _createdAt; void _updatedAt; void _tempo; void _esperada; void _eficiencia; setForm(data); setEditingId(item.id); window.scrollTo({ top: 0, behavior: "smooth" }) }
+  async function remove(item: Apontamento) { if (!window.confirm("Excluir este apontamento? Os indicadores serão recalculados.")) return; await apontamentosRepository.remove(item.id); await load(); setFeedback({ message: "Apontamento excluído.", tone: "success" }) }
+  function selectOrder(opId: string) { const order = orders.find((item) => item.id === opId); setForm((current) => ({ ...current, opId, corId: order?.corId ?? current.corId })) }
+
+  return <div className="page-stack"><PageHeader eyebrow="Registro digital" title="Apontamento de Produção" description="Registros conectados à equipe, OPs, operações e cores cadastradas." /><Feedback {...feedback} /><div className="split-layout"><Card className="form-card"><form onSubmit={(event) => void submit(event)}><div className="form-grid"><Select required label="Funcionária" value={form.funcionarioId} onChange={(e) => setForm({ ...form, funcionarioId: e.target.value })}><option value="">Selecione</option>{employees.filter((item) => item.status === "Ativo").map((item) => <option value={item.id} key={item.id}>{item.matricula} — {item.nome}</option>)}</Select><Select required label="OP" value={form.opId} onChange={(e) => selectOrder(e.target.value)}><option value="">Selecione</option>{orders.filter((item) => !["Finalizada", "Cancelada"].includes(item.status)).map((item) => <option value={item.id} key={item.id}>OP {item.numero}</option>)}</Select><Select required label="Operação" value={form.operacaoId} onChange={(e) => setForm({ ...form, operacaoId: e.target.value })}><option value="">Selecione</option>{operations.filter((item) => item.status === "Ativo").map((item) => <option value={item.id} key={item.id}>{item.codigo} — {item.nome}</option>)}</Select><Select label="Cor" value={form.corId} onChange={(e) => setForm({ ...form, corId: e.target.value })}><option value="">Selecione</option>{colors.filter((item) => item.status === "Ativo").map((item) => <option value={item.id} key={item.id}>{item.nome}</option>)}</Select><Input label="Tamanho" value={form.tamanho} onChange={(e) => setForm({ ...form, tamanho: e.target.value })} /><Input label="Pacote" value={form.pacote} onChange={(e) => setForm({ ...form, pacote: e.target.value })} /><Input required min="1" type="number" label="Quantidade produzida" value={form.quantidade || ""} onChange={(e) => setForm({ ...form, quantidade: Number(e.target.value) })} /><Input required min="1" type="number" label="Meta peças/hora" value={form.metaPecasHora || ""} onChange={(e) => setForm({ ...form, metaPecasHora: Number(e.target.value) })} /><Input required type="time" label="Hora inicial" value={form.horaInicio} onChange={(e) => setForm({ ...form, horaInicio: e.target.value })} /><Input required type="time" label="Hora final" value={form.horaFim} onChange={(e) => setForm({ ...form, horaFim: e.target.value })} /></div><label className="ui-field"><span>Observação</span><textarea value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} /></label><div className="modal-actions">{editingId ? <Button type="button" variant="ghost" onClick={() => { setEditingId(undefined); setForm(empty) }}>Cancelar edição</Button> : null}<Button type="submit">{editingId ? "Salvar alterações" : "Registrar apontamento"}</Button></div></form></Card><Card className="calculation-card"><span>Resultado calculado</span><div><small>Tempo trabalhado</small><strong>{minutes} min</strong></div><div><small>Produção esperada</small><strong>{expected.toFixed(1)} peças</strong></div><div className="efficiency-result"><small>Eficiência</small><strong>{formatPercent(efficiency)}</strong><Badge tone={classification.tone}>{classification.label}</Badge></div><p>Os valores brutos são salvos; arredondamento apenas na apresentação.</p></Card></div>{records.length === 0 ? <Card><EmptyState title="Nenhum apontamento registrado" description="Cadastre a equipe e uma OP para começar." /></Card> : <Card><Table><thead><tr><th>Funcionária</th><th>OP / Operação</th><th>Cor</th><th>Quantidade</th><th>Tempo</th><th>Eficiência</th><th>Ações</th></tr></thead><tbody>{records.map((item) => { const status = classificarEficiencia(item.eficiencia); return <tr key={item.id}><td><strong>{employeeMap.get(item.funcionarioId) || "Cadastro removido"}</strong></td><td><strong>OP {orderMap.get(item.opId) || "—"}</strong><small>{operationMap.get(item.operacaoId) || "—"}</small></td><td>{colorMap.get(item.corId) || "—"}</td><td>{item.quantidade}</td><td>{item.tempoMinutos} min</td><td><Badge tone={status.tone}>{formatPercent(item.eficiencia)}</Badge></td><td><div className="table-actions"><button onClick={() => edit(item)}>Editar</button><button className="danger-link" onClick={() => void remove(item)}>Excluir</button></div></td></tr> })}</tbody></Table></Card>}</div>
+}
+export default ApontamentosPage
